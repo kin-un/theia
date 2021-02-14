@@ -81,7 +81,6 @@ export abstract class AbstractConnectionStatusService implements ConnectionStatu
     protected readonly statusChangeEmitter = new Emitter<ConnectionStatus>();
 
     protected connectionStatus: ConnectionStatus = ConnectionStatus.ONLINE;
-    protected timer: number | undefined;
 
     @inject(ILogger)
     protected readonly logger: ILogger;
@@ -98,40 +97,19 @@ export abstract class AbstractConnectionStatusService implements ConnectionStatu
 
     dispose(): void {
         this.statusChangeEmitter.dispose();
-        if (this.timer) {
-            this.clearTimeout(this.timer);
-        }
     }
 
     protected updateStatus(success: boolean): void {
-        // clear existing timer
-        if (this.timer) {
-            this.clearTimeout(this.timer);
-        }
         const previousStatus = this.connectionStatus;
         const newStatus = success ? ConnectionStatus.ONLINE : ConnectionStatus.OFFLINE;
         if (previousStatus !== newStatus) {
             this.connectionStatus = newStatus;
             this.fireStatusChange(newStatus);
         }
-        // schedule offline
-        this.timer = this.setTimeout(() => {
-            this.logger.trace(`No activity for ${this.options.offlineTimeout} ms. We are offline.`);
-            this.updateStatus(false);
-        }, this.options.offlineTimeout);
     }
 
     protected fireStatusChange(status: ConnectionStatus): void {
         this.statusChangeEmitter.fire(status);
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    protected setTimeout(handler: (...args: any[]) => void, timeout: number): number {
-        return window.setTimeout(handler, timeout);
-    }
-
-    protected clearTimeout(handle: number): void {
-        window.clearTimeout(handle);
     }
 
 }
@@ -146,7 +124,14 @@ export class FrontendConnectionStatusService extends AbstractConnectionStatusSer
 
     @postConstruct()
     protected init(): void {
-        this.schedulePing();
+        this.wsConnectionProvider.onSocketOpened(() => {
+            this.updateStatus(true);
+            this.schedulePing();
+        });
+        this.wsConnectionProvider.onSocketClosed(() => {
+            this.clearTimeout(this.scheduledPing);
+            this.updateStatus(false);
+        });
         this.wsConnectionProvider.onIncomingMessageActivity(() => {
             // natural activity
             this.updateStatus(true);
@@ -155,18 +140,30 @@ export class FrontendConnectionStatusService extends AbstractConnectionStatusSer
     }
 
     protected schedulePing(): void {
-        if (this.scheduledPing) {
-            this.clearTimeout(this.scheduledPing);
-        }
+        this.clearTimeout(this.scheduledPing);
         this.scheduledPing = this.setTimeout(async () => {
-            try {
-                await this.pingService.ping();
-                this.updateStatus(true);
-            } catch (e) {
-                this.logger.trace(e);
-            }
+            await this.performPingRequest();
             this.schedulePing();
-        }, this.options.offlineTimeout * 0.8);
+        }, this.options.offlineTimeout);
+    }
+
+    protected async performPingRequest(): Promise<void> {
+        try {
+            await this.pingService.ping();
+            this.updateStatus(true);
+        } catch (e) {
+            this.updateStatus(false);
+            await this.logger.trace(e);
+        }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    protected setTimeout(handler: (...args: any[]) => void, timeout: number): number {
+        return window.setTimeout(handler, timeout);
+    }
+
+    protected clearTimeout(handle?: number): void {
+        window.clearTimeout(handle);
     }
 }
 

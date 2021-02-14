@@ -25,8 +25,9 @@ FrontendApplicationConfigProvider.set({
 });
 
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import { ConnectionStatus } from './connection-status-service';
-import { MockConnectionStatusService } from './test/mock-connection-status-service';
+import { MockConnectionStatusService, MockFrontendConnectionStatusService } from './test/mock-connection-status-service';
 
 disableJSDOM();
 
@@ -71,6 +72,103 @@ describe('connection-status', function (): void {
         expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
     });
 
+});
+
+describe('frontend-connection-status', function (): void {
+    let connectionStatusService: MockFrontendConnectionStatusService;
+    let pingMock: sinon.SinonStub;
+
+    before(() => {
+        disableJSDOM = enableJSDOM();
+    });
+
+    after(() => {
+        disableJSDOM();
+    });
+
+    beforeEach(() => {
+        connectionStatusService = new MockFrontendConnectionStatusService();
+        pingMock = sinon.stub(connectionStatusService.ping, 'ping');
+    });
+
+    afterEach(() => {
+        if (connectionStatusService !== undefined) {
+            connectionStatusService.dispose();
+        }
+
+        pingMock.restore();
+    });
+
+    it('should switch status to offline on websocket close', () => {
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        connectionStatusService.connectionProvider.socketClosed();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.OFFLINE);
+    });
+
+    it('should switch status to online on websocket established', () => {
+        connectionStatusService.connectionProvider.socketClosed();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.OFFLINE);
+        connectionStatusService.connectionProvider.socketOpened();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+    });
+
+    it('should switch status to online on any websocket activity',  () => {
+        connectionStatusService.connectionProvider.socketClosed();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.OFFLINE);
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+    });
+
+    it('should perform ping request after socket activity', async () => {
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT + 1);
+        sinon.assert.calledOnce(pingMock);
+    });
+
+    it('should perform ping request after socket activity with twice delay', async () => {
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT * 2.5);
+        sinon.assert.calledTwice(pingMock);
+    });
+
+    it('should not perform ping request before desired timeout', async () => {
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT - 1);
+        sinon.assert.notCalled(pingMock);
+    });
+
+    it('should switch to offline mode if ping request was rejected', async () => {
+        pingMock.onCall(0).throws('failed to make a ping request');
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT + 1);
+        sinon.assert.calledOnce(pingMock);
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.OFFLINE);
+    });
+
+    it('should not perform ping request after opening and immediately closed socket', async () => {
+        connectionStatusService.connectionProvider.socketActivity();
+        connectionStatusService.connectionProvider.socketClosed();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.OFFLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT + 1);
+        sinon.assert.notCalled(pingMock);
+    });
+
+    it('should should perform one ping request after several events that comes with delay', async () => {
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT * 0.2);
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT * 0.2);
+        connectionStatusService.connectionProvider.socketActivity();
+        expect(connectionStatusService.currentStatus).to.be.equal(ConnectionStatus.ONLINE);
+        await pause(connectionStatusService.MOCK_PING_TIMEOUT + 1);
+        sinon.assert.calledOnce(pingMock);
+    });
 });
 
 function pause(time: number = 1): Promise<unknown> {

@@ -15,8 +15,14 @@
  ********************************************************************************/
 
 import { MockLogger } from '../../common/test/mock-logger';
-import { AbstractConnectionStatusService } from '../connection-status-service';
+import {
+    AbstractConnectionStatusService, ConnectionStatusOptions,
+    FrontendConnectionStatusService,
+    PingService
+} from '../connection-status-service';
 import { ILogger } from '../../common/logger';
+import { MockWebsocketConnectionProvider } from './mock-websocket-connection-provider';
+import { WebSocketConnectionProvider } from '../../browser';
 
 export class MockConnectionStatusService extends AbstractConnectionStatusService {
 
@@ -32,4 +38,32 @@ export class MockConnectionStatusService extends AbstractConnectionStatusService
         this.updateStatus(alive);
     }
 
+}
+
+export class MockFrontendConnectionStatusService extends FrontendConnectionStatusService {
+    public readonly MOCK_PING_TIMEOUT = 10;
+
+    protected readonly logger: ILogger = new MockLogger();
+    protected readonly pingService: PingService = new MockPingService();
+    protected readonly wsConnectionProvider: WebSocketConnectionProvider = new MockWebsocketConnectionProvider();
+    protected readonly options: ConnectionStatusOptions = { offlineTimeout: this.MOCK_PING_TIMEOUT };
+
+    constructor() {
+        super();
+        this.init();
+    }
+
+    get connectionProvider(): MockWebsocketConnectionProvider {
+        return this.wsConnectionProvider as MockWebsocketConnectionProvider;
+    }
+
+    get ping(): PingService {
+        return this.pingService;
+    }
+}
+
+export class MockPingService implements PingService {
+    ping(): Promise<void> {
+        return Promise.resolve(undefined);
+    }
 }
